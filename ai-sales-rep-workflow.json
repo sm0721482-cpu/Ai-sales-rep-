@@ -1,0 +1,686 @@
+{
+  "name": "AI Sales Rep That Never Sleeps (Lead Follow-up + Voice Agent)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-lead",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "name": "New Lead Webhook",
+      "id": "0720d497-9393-4b76-980a-4df780bd18a2",
+      "webhookId": "1dccae98-1973-4ba9-91a6-bf296a740b1d"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bf3c8ffb-e9d2-4953-8c23-ddfa2ac5b0c3",
+              "name": "name",
+              "value": "={{ $json.body.name }}",
+              "type": "string"
+            },
+            {
+              "id": "5e13d1f5-87e6-44ff-b484-81699d1996c0",
+              "name": "email",
+              "value": "={{ $json.body.email }}",
+              "type": "string"
+            },
+            {
+              "id": "bfd48927-fd70-4f76-a302-efe8b8a4701b",
+              "name": "phone",
+              "value": "={{ $json.body.phone }}",
+              "type": "string"
+            },
+            {
+              "id": "7b5e6f49-3095-4582-954d-d02431f21bae",
+              "name": "message",
+              "value": "={{ $json.body.message }}",
+              "type": "string"
+            },
+            {
+              "id": "fe693db2-c7e9-4240-ad2f-517090bf20bf",
+              "name": "source",
+              "value": "={{ $json.body.source || 'website' }}",
+              "type": "string"
+            },
+            {
+              "id": "b735b133-9628-41fc-b5bc-5c90b15115a5",
+              "name": "createdAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ],
+      "name": "Normalize Lead",
+      "id": "20c0067b-457a-432b-b916-a57f992e03f1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Lead name: {{ $json.name }}\nSource: {{ $json.source }}\nLead message: {{ $json.message }}",
+        "options": {
+          "systemMessage": "You are a friendly, professional AI sales assistant for a business. A new lead has just come in.\nYour tasks:\n1. Use the knowledge base tool to answer any question the lead asked. Never invent prices or facts.\n2. Qualify the lead: need, budget, timeline.\n3. Score the lead from 1 to 10 (7+ = hot lead ready for a call).\n4. Write a short, warm reply (max 80 words) that answers their question and invites them to book a call.\n\nReturn ONLY valid JSON, no markdown, in this exact shape:\n{\"score\": 8, \"need\": \"...\", \"budget\": \"...\", \"timeline\": \"...\", \"summary\": \"one line summary\", \"reply\": \"message to send to the lead\"}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        460,
+        300
+      ],
+      "name": "Lead Qualifier Agent",
+      "id": "857e5230-0bf2-40c6-81c1-a3882bda8254"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        400,
+        540
+      ],
+      "name": "OpenAI Chat Model",
+      "id": "807bf534-0910-426b-978e-0660c0dfc784"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Search the business knowledge base (services, pricing, FAQs, policies) to answer the lead's questions.",
+        "pineconeIndex": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "topK": 4,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "typeVersion": 1.1,
+      "position": [
+        600,
+        540
+      ],
+      "name": "Knowledge Base (Pinecone RAG)",
+      "id": "a352c7fa-42ab-4a46-bab4-d81b148791b9"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        620,
+        740
+      ],
+      "name": "OpenAI Embeddings",
+      "id": "cb145a77-3705-460b-937e-970adf9a663b"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = String($input.first().json.output || '');\nlet d;\ntry {\n  d = JSON.parse(raw.replace(/```json|```/g, '').trim());\n} catch (e) {\n  d = { score: 5, need: '', budget: '', timeline: '', summary: 'Could not parse AI output', reply: raw };\n}\nconst lead = $('Normalize Lead').first().json;\nconst score = Number(d.score) || 0;\nreturn [{ json: { ...lead, ...d, score, status: score >= 7 ? 'HOT' : 'WARM' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        300
+      ],
+      "name": "Parse & Score Lead",
+      "id": "128eefd3-ca78-4e92-80ed-c25cb09cec67"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "=Thanks for reaching out, {{ $json.name }}!",
+        "message": "={{ $json.reply }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1040,
+        300
+      ],
+      "name": "Instant Reply to Lead",
+      "id": "10a9559f-cc4a-4c5c-ba3a-9ef27b81db43"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_YOUR_GOOGLE_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "createdAt": "={{ $('Parse & Score Lead').item.json.createdAt }}",
+            "name": "={{ $('Parse & Score Lead').item.json.name }}",
+            "email": "={{ $('Parse & Score Lead').item.json.email }}",
+            "phone": "={{ $('Parse & Score Lead').item.json.phone }}",
+            "source": "={{ $('Parse & Score Lead').item.json.source }}",
+            "score": "={{ $('Parse & Score Lead').item.json.score }}",
+            "status": "={{ $('Parse & Score Lead').item.json.status }}",
+            "summary": "={{ $('Parse & Score Lead').item.json.summary }}"
+          },
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1260,
+        300
+      ],
+      "name": "Save Lead to CRM (Google Sheets)",
+      "id": "1b479e7d-d6d9-42b8-ac65-c44d223e6e01"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "a35cf759-9752-456f-b374-a2850e148a3c",
+              "leftValue": "={{ $('Parse & Score Lead').item.json.score }}",
+              "rightValue": 7,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1480,
+        300
+      ],
+      "name": "Hot Lead? (score 7+)",
+      "id": "1baa206c-a1af-44d9-9708-6310f4091ec7"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.vapi.ai/call",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer PASTE_YOUR_VAPI_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"assistantId\": \"PASTE_YOUR_VAPI_ASSISTANT_ID\",\n  \"phoneNumberId\": \"PASTE_YOUR_VAPI_PHONE_NUMBER_ID\",\n  \"customer\": {\n    \"number\": \"{{ $('Parse & Score Lead').item.json.phone }}\",\n    \"name\": \"{{ $('Parse & Score Lead').item.json.name }}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1720,
+        180
+      ],
+      "name": "AI Voice Call (Vapi)",
+      "id": "ef23d486-153c-459e-87a3-169fd8b84c6e"
+    },
+    {
+      "parameters": {
+        "chatId": "PASTE_YOUR_TELEGRAM_CHAT_ID",
+        "text": "=🔥 HOT LEAD - AI call started\nName: {{ $('Parse & Score Lead').item.json.name }}\nPhone: {{ $('Parse & Score Lead').item.json.phone }}\nScore: {{ $('Parse & Score Lead').item.json.score }}/10\nSummary: {{ $('Parse & Score Lead').item.json.summary }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1960,
+        180
+      ],
+      "name": "Alert Owner (Telegram)",
+      "id": "9640bea0-6a25-42c5-bfe2-50d3b628c4ec"
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "days"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1720,
+        440
+      ],
+      "name": "Wait 1 Day",
+      "id": "350bd915-3413-4c0f-a63f-7194880c529f",
+      "webhookId": "bc3b59b8-1a16-4f07-9b34-a501b626116f"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse & Score Lead').item.json.email }}",
+        "subject": "=Quick follow-up, {{ $('Parse & Score Lead').item.json.name }}",
+        "message": "=Hi {{ $('Parse & Score Lead').item.json.name }}, just checking in. Do you have any questions I can help with? Reply here and we'll set up a quick call.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1940,
+        440
+      ],
+      "name": "Follow-up Day 1",
+      "id": "fab5ef55-3588-44ee-8c0e-1bf6b54010e3"
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "days"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2160,
+        440
+      ],
+      "name": "Wait 2 Days",
+      "id": "589bbe0e-097a-4b3e-89f5-fa9e557a0275",
+      "webhookId": "109eadb9-53c9-4b36-bba9-5a95a28d8a8a"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse & Score Lead').item.json.email }}",
+        "subject": "=Quick follow-up, {{ $('Parse & Score Lead').item.json.name }}",
+        "message": "=Hi {{ $('Parse & Score Lead').item.json.name }}, I wanted to share how we can help with what you asked about. Want me to book a 15-minute call?",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2380,
+        440
+      ],
+      "name": "Follow-up Day 3",
+      "id": "966f3b79-4c77-4a35-b44c-26c8a9bf2c5d"
+    },
+    {
+      "parameters": {
+        "amount": 4,
+        "unit": "days"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2600,
+        440
+      ],
+      "name": "Wait 4 Days",
+      "id": "208139cc-95da-443b-8cc8-7cead771f24e",
+      "webhookId": "94c5a663-08b7-4615-907f-5dbcbe35f277"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse & Score Lead').item.json.email }}",
+        "subject": "=Quick follow-up, {{ $('Parse & Score Lead').item.json.name }}",
+        "message": "=Hi {{ $('Parse & Score Lead').item.json.name }}, last note from me. If you're still interested, just reply and we'll get started. Thanks!",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        2820,
+        440
+      ],
+      "name": "Follow-up Day 7",
+      "id": "6eb86603-6da1-4753-af5f-9cbe5e755170"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 18
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        900
+      ],
+      "name": "Daily Report Schedule",
+      "id": "25c922ca-8ac5-4504-b9d7-063d13eb2c2f"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "PASTE_YOUR_GOOGLE_SHEET_URL"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        900
+      ],
+      "name": "Read All Leads",
+      "id": "1cc1fed3-e0e0-48d6-878b-7d935e50ca32"
+    },
+    {
+      "parameters": {
+        "jsCode": "const today = new Date().toISOString().slice(0, 10);\nconst rows = $input.all().map(i => i.json).filter(r => String(r.createdAt || '').startsWith(today));\nconst hot = rows.filter(r => r.status === 'HOT').length;\nconst text = `📊 Daily Sales Report\\nNew leads today: ${rows.length}\\nHot leads (AI called): ${hot}\\nWarm leads (in follow-up): ${rows.length - hot}`;\nreturn [{ json: { text } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        900
+      ],
+      "name": "Build Report",
+      "id": "2bfe3eee-63e0-444f-bff4-72d279c8700c"
+    },
+    {
+      "parameters": {
+        "chatId": "PASTE_YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        900
+      ],
+      "name": "Send Daily Report (Telegram)",
+      "id": "cbf3aeb3-97eb-43ee-b543-7ce39a08f4a8"
+    },
+    {
+      "parameters": {
+        "width": 520,
+        "height": 380,
+        "content": "## AI Sales Rep That Never Sleeps\n**Setup:**\n1. Connect credentials: OpenAI, Pinecone, Gmail, Google Sheets, Telegram.\n2. Sheet 'Leads' columns: createdAt, name, email, phone, source, score, status, summary.\n3. Replace every PASTE_YOUR_... value (Sheet URL, Vapi key/assistant/phone IDs, Telegram chat ID).\n4. Upload your business FAQs to Pinecone and pick the index in the RAG node.\n5. POST leads to the webhook: {name, email, phone, message, source}.\n6. Optional: add a reply check before each follow-up so replied leads are skipped. Swap Gmail for the WhatsApp node if preferred."
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        40
+      ],
+      "name": "Setup Notes",
+      "id": "12eb451b-7f10-4b08-bad7-fd512d70e2e1"
+    }
+  ],
+  "connections": {
+    "New Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Lead": {
+      "main": [
+        [
+          {
+            "node": "Lead Qualifier Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Qualifier Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse & Score Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Score Lead": {
+      "main": [
+        [
+          {
+            "node": "Instant Reply to Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instant Reply to Lead": {
+      "main": [
+        [
+          {
+            "node": "Save Lead to CRM (Google Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Lead to CRM (Google Sheets)": {
+      "main": [
+        [
+          {
+            "node": "Hot Lead? (score 7+)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Lead Qualifier Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge Base (Pinecone RAG)": {
+      "ai_tool": [
+        [
+          {
+            "node": "Lead Qualifier Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Knowledge Base (Pinecone RAG)",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hot Lead? (score 7+)": {
+      "main": [
+        [
+          {
+            "node": "AI Voice Call (Vapi)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait 1 Day",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Voice Call (Vapi)": {
+      "main": [
+        [
+          {
+            "node": "Alert Owner (Telegram)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1 Day": {
+      "main": [
+        [
+          {
+            "node": "Follow-up Day 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-up Day 1": {
+      "main": [
+        [
+          {
+            "node": "Wait 2 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 2 Days": {
+      "main": [
+        [
+          {
+            "node": "Follow-up Day 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Follow-up Day 3": {
+      "main": [
+        [
+          {
+            "node": "Wait 4 Days",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 4 Days": {
+      "main": [
+        [
+          {
+            "node": "Follow-up Day 7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Report Schedule": {
+      "main": [
+        [
+          {
+            "node": "Read All Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read All Leads": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Report (Telegram)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
